@@ -1,6 +1,6 @@
 # bot.py
 import os
-import logging
+import logging 
 import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,7 +13,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
 PAY_LINK = "https://2ph999.vip/?pid=96253491"
-SHARE_LINK = "https://t.me/FREE30DAYSVIPbot"
+SHARE_LINK = "https://telegram.me/share/url?url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot&text=LIBRE%20ATABS%20LEAKS%20DITO%20🤪🤪"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
