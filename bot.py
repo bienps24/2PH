@@ -2,17 +2,8 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timedelta
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
 # =========================
@@ -23,7 +14,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
 PAY_LINK = "https://2ph999.vip/?pid=96253491"
-SHARE_LINK = "https://telegram.me/share/url?url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot&text=LIBRE%20ATABS%20LEAKS%20DITO%20🤪🤪"
+SHARE_LINK = (
+    "https://telegram.me/share/url?"
+    "url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot"
+    "&text=LIBRE%2030%20DAYS%20VIP%20ACCESS%20DITO!%20🔥"
+)
 
 logging.basicConfig(
     format="%(asctime)s - [%(levelname)s] %(message)s",
@@ -44,32 +39,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY,
             username TEXT,
-            paid INTEGER DEFAULT 0,
-            shared INTEGER DEFAULT 0,
             vip_until TEXT
         )
     """)
-    conn.commit()
-    conn.close()
-
-
-def get_user(telegram_id):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("SELECT paid, shared, vip_until FROM users WHERE telegram_id = ?", (telegram_id,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return {"paid": False, "shared": False, "vip_until": None}
-    paid, shared, vip_until = row
-    return {"paid": bool(paid), "shared": bool(shared), "vip_until": vip_until}
-
-
-def update_user(telegram_id, username, field):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (telegram_id, username) VALUES (?, ?)", (telegram_id, username))
-    c.execute(f"UPDATE users SET {field} = 1 WHERE telegram_id = ?", (telegram_id,))
     conn.commit()
     conn.close()
 
@@ -78,10 +50,22 @@ def approve_user(telegram_id, days=30):
     until = datetime.utcnow() + timedelta(days=days)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
-    c.execute("UPDATE users SET vip_until = ? WHERE telegram_id = ?", (until.isoformat(), telegram_id))
+    c.execute(
+        "INSERT OR REPLACE INTO users (telegram_id, vip_until) VALUES (?, ?)",
+        (telegram_id, until.isoformat())
+    )
     conn.commit()
     conn.close()
     return until.strftime("%Y-%m-%d")
+
+
+def get_user(telegram_id):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT vip_until FROM users WHERE telegram_id = ?", (telegram_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 
 # =========================
@@ -93,18 +77,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         f"👋 Hi **{username}!**\n\n"
-        "🎁 *Gusto mo ng 30 DAYS FREE VIP ACCESS?* Sundin lang ang mga hakbang sa ibaba:\n\n"
-        "1️⃣ **Mag-Signup at Mag-Cash-In** gamit ang button.\n"
-        "2️⃣ **I-Share ang Bot** sa mga tropa.\n"
+        "🎁 *Gusto mo ng 30 DAYS FREE VIP ACCESS?*\n\n"
+        "Sundin lang ang mga simpleng hakbang:\n"
+        "1️⃣ **Mag-Sign Up at Mag-Cash In** gamit ang button sa ibaba.\n"
+        "2️⃣ **I-Share ang Bot** sa mga tropa mo.\n"
         "3️⃣ **Chat @PinayWalkerManilaBot** para ma-approve ni admin.\n\n"
-        "💎 *Get VIP access for 30 days to our exclusive channels — 10,000+ videos, photos, and leaks!*\n"
+        "💎 *Get VIP access for 30 days to our exclusive channels — "
+        "10 000 + videos, photos & leaks!*"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🪙 SIGNUP & CASH-IN", url=PAY_LINK)],
-        [InlineKeyboardButton("✅ I PAID", callback_data="paid")],
+        [InlineKeyboardButton("🪙 SIGN UP ", url=PAY_LINK)],
         [InlineKeyboardButton("📤 SHARE BOT", url=SHARE_LINK)],
-        [InlineKeyboardButton("✅ DONE SHARING", callback_data="shared")],
         [InlineKeyboardButton("ℹ️ CHECK STATUS", callback_data="status")],
     ]
 
@@ -118,40 +102,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    username = user.username or user.full_name
     await query.answer()
 
-    data = query.data
-    if data == "paid":
-        update_user(user.id, username, "paid")
-        msg = "💰 Payment recorded!\nNow share the bot and tap **DONE SHARING** after."
-    elif data == "shared":
-        update_user(user.id, username, "shared")
-        msg = (
-            "📤 Thanks for sharing!\n"
-            "Please wait for admin approval — once approved, you’ll get **30 Days VIP Access** 💎"
-        )
-    elif data == "status":
-        st = get_user(user.id)
-        vip = st['vip_until'] or "❌ Not VIP yet"
-        msg = (
-            f"📊 **Status for {username}**\n"
-            f"Paid: {'✅' if st['paid'] else '❌'}\n"
-            f"Shared: {'✅' if st['shared'] else '❌'}\n"
-            f"VIP Until: {vip}"
-        )
-    else:
-        msg = "Unknown action."
-
-    await query.edit_message_text(msg, parse_mode="Markdown")
+    if query.data == "status":
+        vip_until = get_user(user.id)
+        if vip_until:
+            msg = f"💎 You are VIP until: `{vip_until}`"
+        else:
+            msg = (
+                "❌ Wala ka pang VIP Access.\n\n"
+                "👉 Para makakuha:\n"
+                "1️⃣ Signup & Cash-In\n"
+                "2️⃣ Share the bot\n"
+                "3️⃣ Chat @PinayWalkerManilaBot"
+            )
+        await query.edit_message_text(msg, parse_mode="Markdown")
 
 
 # =========================
 # ADMIN COMMANDS
 # =========================
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != ADMIN_TELEGRAM_ID:
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
         await update.message.reply_text("🚫 Not authorized.")
         return
 
@@ -164,14 +136,16 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tid = int(args[0])
         days = int(args[1]) if len(args) > 1 else 30
         until = approve_user(tid, days)
-        await update.message.reply_text(f"✅ Approved `{tid}` for {days} days (until {until})", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ Approved `{tid}` for {days} days (until {until})",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {e}")
 
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != ADMIN_TELEGRAM_ID:
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
         await update.message.reply_text("🚫 Not authorized.")
         return
 
@@ -182,8 +156,10 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         tid = int(args[0])
-        st = get_user(tid)
-        await update.message.reply_text(f"📊 {st}")
+        vip_until = get_user(tid)
+        await update.message.reply_text(
+            f"📊 User {tid}: VIP until {vip_until or 'None'}"
+        )
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {e}")
 
