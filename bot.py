@@ -97,7 +97,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"👋 Hi **{username}!**\n\n"
         "🎁 *Gusto mo ng 30 DAYS FREE VIP ACCESS?* Sundin lang ang mga hakbang:\n\n"
-        "1️⃣ **Mag-Signup at Mag-Cash-In** gamit ang button sa ibaba.\n"
+        "1️⃣ **Mag-Register at Mag Laro** gamit ang button sa ibaba.\n"
         "2️⃣ **I-Share ang Bot** sa mga tropa.\n"
         "3️⃣ **Chat @PinayWalkerManilaBot** para ma-approve ni admin.\n\n"
         "💎 *Pag na-approve ka, may 30-Days VIP Access ka sa exclusive channel — 10,000+ leaks, photos, at videos!*\n\n"
@@ -106,8 +106,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("🪙 SIGNUP & PLAY", url=PAY_LINK)],
-        [InlineKeyboardButton("📤 SHARE BOT", url=SHARE_LINK)],
+        [InlineKeyboardButton("🪙 Step 1: REGISTER", url=PAY_LINK)],
+        [InlineKeyboardButton("📤 Step 2: SHARE 0/3", url=SHARE_LINK)],
         [InlineKeyboardButton("ℹ️ CHECK STATUS", callback_data="status")],
     ]
 
