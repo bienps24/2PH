@@ -2,8 +2,18 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
 from dotenv import load_dotenv
 
 # =========================
@@ -14,16 +24,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
 PAY_LINK = "https://2ph999.vip/?pid=96253491"
-SHARE_LINK = (
-    "https://telegram.me/share/url?"
-    "url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot"
-    "&text=LIBRE%2030%20DAYS%20VIP%20ACCESS%20DITO!%20🔥"
-)
+SHARE_LINK = "https://telegram.me/share/url?url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot&text=LIBRE%20ATABS%20LEAKS%20DITO%20🤪🤪"
+VIP_CHANNEL_LINK = "https://t.me/+quScJu8EG2dlYTk1"  # always visible to all users
+WELCOME_IMAGE = "welcome.jpg"  # upload this file in the same folder as bot.py
 
-logging.basicConfig(
-    format="%(asctime)s - [%(levelname)s] %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - [%(levelname)s] %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DB_PATH = "vip.db"
@@ -39,6 +44,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY,
             username TEXT,
+            paid INTEGER DEFAULT 0,
+            shared INTEGER DEFAULT 0,
             vip_until TEXT
         )
     """)
@@ -46,26 +53,26 @@ def init_db():
     conn.close()
 
 
+def get_user(telegram_id):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT paid, shared, vip_until FROM users WHERE telegram_id = ?", (telegram_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return {"paid": False, "shared": False, "vip_until": None}
+    paid, shared, vip_until = row
+    return {"paid": bool(paid), "shared": bool(shared), "vip_until": vip_until}
+
+
 def approve_user(telegram_id, days=30):
     until = datetime.utcnow() + timedelta(days=days)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
-    c.execute(
-        "INSERT OR REPLACE INTO users (telegram_id, vip_until) VALUES (?, ?)",
-        (telegram_id, until.isoformat())
-    )
+    c.execute("UPDATE users SET vip_until = ? WHERE telegram_id = ?", (until.isoformat(), telegram_id))
     conn.commit()
     conn.close()
     return until.strftime("%Y-%m-%d")
-
-
-def get_user(telegram_id):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("SELECT vip_until FROM users WHERE telegram_id = ?", (telegram_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
 
 
 # =========================
@@ -75,55 +82,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = user.username or user.full_name
 
+    # Send welcome image if present
+    if os.path.exists(WELCOME_IMAGE):
+        await update.message.reply_photo(photo=InputFile(WELCOME_IMAGE))
+
     text = (
         f"👋 Hi **{username}!**\n\n"
-        "🎁 *Gusto mo ng 30 DAYS FREE VIP ACCESS?*\n\n"
-        "Sundin lang ang mga simpleng hakbang:\n"
-        "1️⃣ **Mag-Sign Up at Mag-Cash In** gamit ang button sa ibaba.\n"
-        "2️⃣ **I-Share ang Bot** sa mga tropa mo.\n"
+        "🎁 *Gusto mo ng 30 DAYS FREE VIP ACCESS?* Sundin lang ang mga hakbang:\n\n"
+        "1️⃣ **Mag-Signup at Mag-Cash-In** gamit ang button sa ibaba.\n"
+        "2️⃣ **I-Share ang Bot** sa mga tropa.\n"
         "3️⃣ **Chat @PinayWalkerManilaBot** para ma-approve ni admin.\n\n"
-        "💎 *Get VIP access for 30 days to our exclusive channels — "
-        "10 000 + videos, photos & leaks!*"
+        "💎 *Pag na-approve ka, may 30-Days VIP Access ka sa exclusive channel — 10,000+ leaks, photos, at videos!*\n\n"
+        f"🔗 **VIP Channel Preview:**\n👉 {VIP_CHANNEL_LINK}\n\n"
+        "👇 Piliin ang action sa ibaba:"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🪙 SIGN UP ", url=PAY_LINK)],
+        [InlineKeyboardButton("🪙 SIGNUP & CASH-IN", url=PAY_LINK)],
         [InlineKeyboardButton("📤 SHARE BOT", url=SHARE_LINK)],
         [InlineKeyboardButton("ℹ️ CHECK STATUS", callback_data="status")],
     ]
 
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
+    username = user.username or user.full_name
     await query.answer()
 
-    if query.data == "status":
-        vip_until = get_user(user.id)
-        if vip_until:
-            msg = f"💎 You are VIP until: `{vip_until}`"
-        else:
-            msg = (
-                "❌ Wala ka pang VIP Access.\n\n"
-                "👉 Para makakuha:\n"
-                "1️⃣ Signup & Cash-In\n"
-                "2️⃣ Share the bot\n"
-                "3️⃣ Chat @PinayWalkerManilaBot"
-            )
-        await query.edit_message_text(msg, parse_mode="Markdown")
+    data = query.data
+    if data == "status":
+        st = get_user(user.id)
+        vip = st['vip_until'] or "❌ Not VIP yet"
+
+        msg = (
+            f"📊 **Status for {username}**\n"
+            f"Paid: {'✅' if st['paid'] else '❌'}\n"
+            f"Shared: {'✅' if st['shared'] else '❌'}\n"
+            f"VIP Until: {vip}\n\n"
+            f"🔗 *VIP Channel:* {VIP_CHANNEL_LINK}\n\n"
+            "💬 Once approved, you’ll get your VIP privileges automatically."
+        )
+    else:
+        msg = "Unknown action."
+
+    await query.edit_message_text(msg, parse_mode="Markdown")
 
 
 # =========================
 # ADMIN COMMANDS
 # =========================
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+    user = update.effective_user
+    if user.id != ADMIN_TELEGRAM_ID:
         await update.message.reply_text("🚫 Not authorized.")
         return
 
@@ -136,32 +149,34 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tid = int(args[0])
         days = int(args[1]) if len(args) > 1 else 30
         until = approve_user(tid, days)
-        await update.message.reply_text(
-            f"✅ Approved `{tid}` for {days} days (until {until})",
-            parse_mode="Markdown"
+
+        await update.message.reply_text(f"✅ Approved `{tid}` for {days} days (until {until})", parse_mode="Markdown")
+
+        await context.bot.send_message(
+            tid,
+            f"🎉 Congratulations! You now have **{days} days VIP Access!**\n\n"
+            f"👉 Access VIP content here: {VIP_CHANNEL_LINK}"
         )
+
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {e}")
 
 
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: pin an announcement message."""
+    user = update.effective_user
+    if user.id != ADMIN_TELEGRAM_ID:
         await update.message.reply_text("🚫 Not authorized.")
         return
 
-    args = context.args
-    if not args:
-        await update.message.reply_text("Usage: /check <telegram_id>")
+    if not context.args:
+        await update.message.reply_text("Usage: /pin <announcement message>")
         return
 
-    try:
-        tid = int(args[0])
-        vip_until = get_user(tid)
-        await update.message.reply_text(
-            f"📊 User {tid}: VIP until {vip_until or 'None'}"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Error: {e}")
+    announcement = " ".join(context.args)
+    msg = await update.message.reply_text(f"📌 *Announcement:*\n{announcement}", parse_mode="Markdown")
+    await msg.pin()
+    await update.message.reply_text("✅ Message pinned successfully.")
 
 
 # =========================
@@ -175,9 +190,9 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", start))  # alias
+    app.add_handler(CommandHandler("status", start))
     app.add_handler(CommandHandler("approve", approve))
-    app.add_handler(CommandHandler("check", check))
+    app.add_handler(CommandHandler("pin", pin))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
     logger.info("🤖 Bot is live and running...")
