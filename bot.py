@@ -98,7 +98,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("🪙 SIGNUP & CASH-IN", url=PAY_LINK)],
+        [InlineKeyboardButton("🪙 SIGNUP & PLAY", url=PAY_LINK)],
         [InlineKeyboardButton("📤 SHARE BOT", url=SHARE_LINK)],
         [InlineKeyboardButton("ℹ️ CHECK STATUS", callback_data="status")],
     ]
