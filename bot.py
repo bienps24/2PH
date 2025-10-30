@@ -119,7 +119,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg = (
             f"📊 **Status for {username}**\n"
-            f"Paid: {'✅' if st['paid'] else '❌'}\n"
+            f"Registered: {'✅' if st['paid'] else '❌'}\n"
             f"Shared: {'✅' if st['shared'] else '❌'}\n"
             f"VIP Until: {vip}\n\n"
             f"🔗 *VIP Channel:* {VIP_CHANNEL_LINK}\n\n"
