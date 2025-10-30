@@ -1,6 +1,7 @@
 import os
 import logging
 import sqlite3
+import asyncio
 from datetime import datetime, timedelta
 from telegram import (
     Update,
@@ -81,6 +82,13 @@ def approve_user(telegram_id, days=30):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = user.username or user.full_name
+
+    # add to database if new user
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO users (telegram_id, username) VALUES (?, ?)", (user.id, username))
+    conn.commit()
+    conn.close()
 
     # Send welcome image if present
     if os.path.exists(WELCOME_IMAGE):
@@ -180,6 +188,52 @@ async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# BROADCAST SYSTEM
+# =========================
+async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: send a message to all registered users."""
+    user = update.effective_user
+    if user.id != ADMIN_TELEGRAM_ID:
+        await update.message.reply_text("🚫 Not authorized.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /broadcast <message>")
+        return
+
+    announcement = " ".join(context.args)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT telegram_id FROM users")
+    users = [row[0] for row in c.fetchall()]
+    conn.close()
+
+    sent_count = 0
+    failed_count = 0
+
+    await update.message.reply_text(f"📢 Sending announcement to {len(users)} users...")
+
+    for uid in users:
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=f"📣 *Announcement:*\n{announcement}",
+                parse_mode="Markdown"
+            )
+            sent_count += 1
+            await asyncio.sleep(0.3)
+        except Exception as e:
+            failed_count += 1
+            logger.warning(f"Failed to send to {uid}: {e}")
+
+    await update.message.reply_text(
+        f"✅ Broadcast complete!\n\n"
+        f"📬 Sent to: {sent_count}\n"
+        f"⚠️ Failed: {failed_count}"
+    )
+
+
+# =========================
 # MAIN APP
 # =========================
 def main():
@@ -193,6 +247,7 @@ def main():
     app.add_handler(CommandHandler("status", start))
     app.add_handler(CommandHandler("approve", approve))
     app.add_handler(CommandHandler("pin", pin))
+    app.add_handler(CommandHandler("broadcast", broadcast_message))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
     logger.info("🤖 Bot is live and running...")
