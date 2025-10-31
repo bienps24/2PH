@@ -26,13 +26,14 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
 PAY_LINK = "https://2ph999.vip/?pid=96253491"
 SHARE_LINK = "https://telegram.me/share/url?url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot&text=LIBRE%20ATABS%20LEAKS%20DITO%20🤪🤪"
-VIP_CHANNEL_LINK = "https://t.me/+quScJu8EG2dlYTk1"  # always visible to all users
-WELCOME_IMAGE = "welcome.jpg"  # upload this file in the same folder as bot.py
+VIP_CHANNEL_LINK = "https://t.me/+quScJu8EG2dlYTk1"
+WELCOME_IMAGE = "welcome.jpg"
 
 logging.basicConfig(format="%(asctime)s - [%(levelname)s] %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DB_PATH = "vip.db"
+DELETE_AFTER = 15  # seconds
 
 
 # =========================
@@ -54,6 +55,15 @@ def init_db():
     conn.close()
 
 
+def get_total_users():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+
 def get_user(telegram_id):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
@@ -70,10 +80,21 @@ def approve_user(telegram_id, days=30):
     until = datetime.utcnow() + timedelta(days=days)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
-    c.execute("UPDATE users SET vip_until = ? WHERE telegram_id = ?", (until.isoformat(), telegram_id))
+    c.execute("UPDATE users SET vip_until = ?, paid = 1 WHERE telegram_id = ?", (until.isoformat(), telegram_id))
     conn.commit()
     conn.close()
     return until.strftime("%Y-%m-%d")
+
+
+# =========================
+# AUTO DELETE HELPER
+# =========================
+async def auto_delete(message):
+    await asyncio.sleep(DELETE_AFTER)
+    try:
+        await message.delete()
+    except:
+        pass
 
 
 # =========================
@@ -92,7 +113,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Send welcome image if present
     if os.path.exists(WELCOME_IMAGE):
-        await update.message.reply_photo(photo=InputFile(WELCOME_IMAGE))
+        img = await update.message.reply_photo(photo=InputFile(WELCOME_IMAGE))
+        asyncio.create_task(auto_delete(img))
 
     text = (
         f"👋 Hi **{username}!**\n\n"
@@ -111,7 +133,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("ℹ️ CHECK STATUS", callback_data="status")],
     ]
 
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    msg = await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    asyncio.create_task(auto_delete(msg))
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -136,21 +159,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = "Unknown action."
 
-    await query.edit_message_text(msg, parse_mode="Markdown")
+    m = await query.edit_message_text(msg, parse_mode="Markdown")
+    asyncio.create_task(auto_delete(m))
 
 
 # =========================
 # ADMIN COMMANDS
 # =========================
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != ADMIN_TELEGRAM_ID:
-        await update.message.reply_text("🚫 Not authorized.")
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+        msg = await update.message.reply_text("🚫 Not authorized.")
+        asyncio.create_task(auto_delete(msg))
         return
 
     args = context.args
     if not args:
-        await update.message.reply_text("Usage: /approve <telegram_id> [days]")
+        msg = await update.message.reply_text("Usage: /approve <telegram_id> [days]")
+        asyncio.create_task(auto_delete(msg))
         return
 
     try:
@@ -158,7 +183,8 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         days = int(args[1]) if len(args) > 1 else 30
         until = approve_user(tid, days)
 
-        await update.message.reply_text(f"✅ Approved `{tid}` for {days} days (until {until})", parse_mode="Markdown")
+        msg = await update.message.reply_text(f"✅ Approved `{tid}` for {days} days (until {until})", parse_mode="Markdown")
+        asyncio.create_task(auto_delete(msg))
 
         await context.bot.send_message(
             tid,
@@ -167,38 +193,36 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Error: {e}")
+        msg = await update.message.reply_text(f"⚠️ Error: {e}")
+        asyncio.create_task(auto_delete(msg))
 
 
 async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin-only: pin an announcement message."""
-    user = update.effective_user
-    if user.id != ADMIN_TELEGRAM_ID:
-        await update.message.reply_text("🚫 Not authorized.")
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+        msg = await update.message.reply_text("🚫 Not authorized.")
+        asyncio.create_task(auto_delete(msg))
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: /pin <announcement message>")
+        msg = await update.message.reply_text("Usage: /pin <announcement message>")
+        asyncio.create_task(auto_delete(msg))
         return
 
     announcement = " ".join(context.args)
     msg = await update.message.reply_text(f"📌 *Announcement:*\n{announcement}", parse_mode="Markdown")
     await msg.pin()
-    await update.message.reply_text("✅ Message pinned successfully.")
+    asyncio.create_task(auto_delete(msg))
 
 
-# =========================
-# BROADCAST SYSTEM
-# =========================
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin-only: send a message to all registered users."""
-    user = update.effective_user
-    if user.id != ADMIN_TELEGRAM_ID:
-        await update.message.reply_text("🚫 Not authorized.")
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+        msg = await update.message.reply_text("🚫 Not authorized.")
+        asyncio.create_task(auto_delete(msg))
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
+        msg = await update.message.reply_text("Usage: /broadcast <message>")
+        asyncio.create_task(auto_delete(msg))
         return
 
     announcement = " ".join(context.args)
@@ -209,10 +233,6 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     sent_count = 0
-    failed_count = 0
-
-    await update.message.reply_text(f"📢 Sending announcement to {len(users)} users...")
-
     for uid in users:
         try:
             await context.bot.send_message(
@@ -222,15 +242,22 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             sent_count += 1
             await asyncio.sleep(0.3)
-        except Exception as e:
-            failed_count += 1
-            logger.warning(f"Failed to send to {uid}: {e}")
+        except:
+            pass
 
-    await update.message.reply_text(
-        f"✅ Broadcast complete!\n\n"
-        f"📬 Sent to: {sent_count}\n"
-        f"⚠️ Failed: {failed_count}"
-    )
+    msg = await update.message.reply_text(f"✅ Broadcast complete!\n📬 Sent to {sent_count} users.")
+    asyncio.create_task(auto_delete(msg))
+
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+        msg = await update.message.reply_text("🚫 Not authorized.")
+        asyncio.create_task(auto_delete(msg))
+        return
+
+    total = get_total_users()
+    msg = await update.message.reply_text(f"👥 Total bot users: **{total}**", parse_mode="Markdown")
+    asyncio.create_task(auto_delete(msg))
 
 
 # =========================
@@ -244,10 +271,10 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", start))
     app.add_handler(CommandHandler("approve", approve))
     app.add_handler(CommandHandler("pin", pin))
     app.add_handler(CommandHandler("broadcast", broadcast_message))
+    app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
     logger.info("🤖 Bot is live and running...")
