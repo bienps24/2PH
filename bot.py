@@ -26,7 +26,7 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
 PAY_LINK = "https://2ph999.vip/?pid=96253491"
 SHARE_LINK = "https://telegram.me/share/url?url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot&text=LIBRE%20ATABS%20LEAKS%20DITO%20🤪🤪"
-VIP_CHANNEL_LINK = "https://t.me/+quScJu8EG2dlYTk1"
+VIP_CHANNEL_LINK = "https://t.me/+J7QmfrqcY-U5MTBl"
 WELCOME_IMAGE = "welcome.jpg"
 
 logging.basicConfig(format="%(asctime)s - [%(levelname)s] %(message)s", level=logging.INFO)
