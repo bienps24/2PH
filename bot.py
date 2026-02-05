@@ -37,12 +37,12 @@ class BotConfig:
     """Bot configuration settings"""
     bot_token: str
     admin_telegram_id: int
-    pay_link: str = "https://2ph999.vip/?pid=96253491"
+    pay_link: str = "https://PH95222.com/?pid=96253491"
     share_link: str = "https://telegram.me/share/url?url=https%3A%2F%2Ft.me%2FFREE30DAYSVIPbot&text=LIBRE%20ATABS%20LEAKS%20DITO%20🤪🤪"
     vip_channel_link: str = "https://t.me/+MMRjUFZqsmpmN2Vl"
     welcome_image: str = "welcome.jpg"
     db_path: str = "vip.db"
-    delete_after: int = 20
+    delete_after: int = 999
     default_vip_days: int = 30
     broadcast_delay: float = 0.5  # Delay between broadcast messages
 
