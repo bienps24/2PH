@@ -378,6 +378,26 @@ class DatabaseManager:
                 conn.commit()
         except Exception as e:
             logger.error(f"Error marking message {message_id} as replied: {e}")
+    
+    def check_and_approve_referrals(self, config: BotConfig) -> List[Dict]:
+        """Check users who reached referral target and return them for approval"""
+        try:
+            with self.get_connection() as conn:
+                users = conn.execute("""
+                    SELECT telegram_id, referral_count, first_name
+                    FROM users
+                    WHERE referral_count >= ?
+                    AND (vip_until IS NULL OR vip_until < ?)
+                """, (config.referral_target, datetime.utcnow().isoformat())).fetchall()
+                
+                return [{
+                    "telegram_id": row["telegram_id"],
+                    "referral_count": row["referral_count"],
+                    "first_name": row["first_name"]
+                } for row in users]
+        except Exception as e:
+            logger.error(f"Error checking referrals: {e}")
+            return []
 
 
 # =========================
@@ -515,6 +535,9 @@ class UserHandlers:
             self.db.add_or_update_user(user.id, user.username or "", user.first_name or "User", referred_by_code)
             logger.info(f"User {user.id} ({username}) started the bot")
             
+            # Check if user reached referral target
+            await self._check_referral_approval(update, context)
+            
             # Get user data for referral info
             user_data = self.db.get_user(user.id)
             
@@ -565,11 +588,48 @@ class UserHandlers:
             except:
                 pass
     
+    async def _check_referral_approval(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Check and auto-approve users who reached referral target"""
+        try:
+            users_to_approve = self.db.check_and_approve_referrals(self.config)
+            
+            for user_info in users_to_approve:
+                telegram_id = user_info["telegram_id"]
+                
+                # Only approve the current user if they're in the list
+                if telegram_id == update.effective_user.id:
+                    try:
+                        until_date = self.db.approve_user(telegram_id, self.config.default_vip_days)
+                        
+                        # Notify user
+                        await update.message.reply_text(
+                            f"🎉🎉🎉 **CONGRATULATIONS {user_info['first_name']}!** 🎉🎉🎉\n\n"
+                            f"✅ Naka-{self.config.referral_target} referrals ka na!\n\n"
+                            f"💎 **FREE 30 Days VIP Access activated!**\n\n"
+                            f"🔗 **Access your VIP channel:**\n"
+                            f"👉 {self.config.vip_channel_link}\n\n"
+                            f"📅 Valid until: **{until_date}**\n\n"
+                            f"Salamat sa pagsupport! Enjoy your FREE VIP access! 🎊",
+                            parse_mode="Markdown",
+                            disable_web_page_preview=True
+                        )
+                        
+                        logger.info(f"✅ Auto-approved user {telegram_id} via referrals")
+                        
+                    except Exception as e:
+                        logger.error(f"Error auto-approving user {telegram_id}: {e}")
+                        
+        except Exception as e:
+            logger.error(f"Error in referral check: {e}")
+    
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command"""
         try:
             user = update.effective_user
             username = user.username or user.first_name or "User"
+            
+            # Check referral approval first
+            await self._check_referral_approval(update, context)
             
             user_data = self.db.get_user(user.id)
             text = self.formatter.status_message(
@@ -613,6 +673,10 @@ class UserHandlers:
         """Handle /referrals command"""
         try:
             user = update.effective_user
+            
+            # Check referral approval first
+            await self._check_referral_approval(update, context)
+            
             user_data = self.db.get_user(user.id)
             
             referral_count = user_data["referral_count"]
@@ -1347,53 +1411,6 @@ class AdminHandlers:
 
 
 # =========================
-# AUTO-APPROVE REFERRALS
-# =========================
-async def check_and_approve_referrals(context: ContextTypes.DEFAULT_TYPE):
-    """Background task to check and auto-approve users who reached referral target"""
-    try:
-        db = context.bot_data['db']
-        config = context.bot_data['config']
-        
-        with db.get_connection() as conn:
-            # Find users who reached target but not yet VIP
-            users = conn.execute("""
-                SELECT telegram_id, referral_count, first_name
-                FROM users
-                WHERE referral_count >= ?
-                AND (vip_until IS NULL OR vip_until < ?)
-            """, (config.referral_target, datetime.utcnow().isoformat())).fetchall()
-            
-            for user in users:
-                try:
-                    until_date = db.approve_user(user["telegram_id"], config.default_vip_days)
-                    
-                    # Notify user
-                    await context.bot.send_message(
-                        chat_id=user["telegram_id"],
-                        text=(
-                            f"🎉🎉🎉 **CONGRATULATIONS {user['first_name']}!** 🎉🎉🎉\n\n"
-                            f"✅ Naka-{config.referral_target} referrals ka na!\n\n"
-                            f"💎 **FREE 30 Days VIP Access activated!**\n\n"
-                            f"🔗 **Access your VIP channel:**\n"
-                            f"👉 {config.vip_channel_link}\n\n"
-                            f"📅 Valid until: **{until_date}**\n\n"
-                            f"Salamat sa pagsupport! Enjoy your FREE VIP access! 🎊"
-                        ),
-                        parse_mode="Markdown",
-                        disable_web_page_preview=True
-                    )
-                    
-                    logger.info(f"✅ Auto-approved user {user['telegram_id']} via referrals")
-                    
-                except Exception as e:
-                    logger.error(f"Error auto-approving user {user['telegram_id']}: {e}")
-                    
-    except Exception as e:
-        logger.error(f"Error in referral check task: {e}")
-
-
-# =========================
 # ERROR HANDLER
 # =========================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -1443,7 +1460,7 @@ def main():
         bot_username = aio.run(app.bot.get_me()).username
         logger.info(f"🤖 Bot Username: @{bot_username}")
         
-        # Store in bot_data for background tasks
+        # Store in bot_data
         app.bot_data['db'] = db
         app.bot_data['config'] = config
         
@@ -1477,13 +1494,6 @@ def main():
             user_handlers.handle_user_message
         ))
         
-        # Add background task to check referrals every 5 minutes
-        app.job_queue.run_repeating(
-            check_and_approve_referrals,
-            interval=300,  # 5 minutes
-            first=10
-        )
-        
         # Add error handler
         app.add_error_handler(error_handler)
         
@@ -1499,6 +1509,7 @@ def main():
         print("\n🔐 Admin Commands (hidden):")
         print("  • /approve, /stats, /broadcast, /pin")
         print("  • /reply, /messages")
+        print("\n📝 Note: Referral auto-approval checks on user actions")
         print("\n⌨️  Press Ctrl+C to stop the bot")
         print("=" * 50 + "\n")
         
