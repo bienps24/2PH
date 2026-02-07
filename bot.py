@@ -1434,6 +1434,99 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # MAIN APPLICATION
 # =========================
+async def setup_and_run():
+    """Async setup and run function"""
+    # Load configuration
+    config = load_config()
+    logger.info("✅ Configuration loaded successfully")
+    logger.info(f"👤 Admin ID: {config.admin_telegram_id}")
+    logger.info(f"💰 Entrance Fee: ₱{config.entrance_fee}")
+    logger.info(f"🎯 Referral Target: {config.referral_target}")
+    
+    # Initialize database
+    db = DatabaseManager(config.db_path)
+    logger.info(f"✅ Database initialized at: {config.db_path}")
+    
+    # Build application
+    app = Application.builder().token(config.bot_token).build()
+    
+    # Get bot username
+    bot_username = (await app.bot.get_me()).username
+    logger.info(f"🤖 Bot Username: @{bot_username}")
+    
+    # Store in bot_data
+    app.bot_data['db'] = db
+    app.bot_data['config'] = config
+    
+    # Initialize handlers
+    user_handlers = UserHandlers(db, config, bot_username)
+    admin_handlers = AdminHandlers(db, config)
+    callback_handler = CallbackHandler(db, config, bot_username)
+    
+    logger.info("✅ Handlers initialized successfully")
+    
+    # Add user command handlers
+    app.add_handler(CommandHandler("start", user_handlers.start))
+    app.add_handler(CommandHandler("status", user_handlers.status))
+    app.add_handler(CommandHandler("referrals", user_handlers.referrals))
+    app.add_handler(CommandHandler("help", user_handlers.help_command))
+    
+    # Add admin command handlers (hidden from normal users)
+    app.add_handler(CommandHandler("approve", admin_handlers.approve))
+    app.add_handler(CommandHandler("stats", admin_handlers.stats))
+    app.add_handler(CommandHandler("broadcast", admin_handlers.broadcast))
+    app.add_handler(CommandHandler("pin", admin_handlers.pin_announcement))
+    app.add_handler(CommandHandler("reply", admin_handlers.reply_user))
+    app.add_handler(CommandHandler("messages", admin_handlers.messages))
+    
+    # Add callback query handler
+    app.add_handler(CallbackQueryHandler(callback_handler.handle))
+    
+    # Add message handler for user messages to admin
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        user_handlers.handle_user_message
+    ))
+    
+    # Add error handler
+    app.add_error_handler(error_handler)
+    
+    logger.info("✅ All handlers registered successfully")
+    print("\n" + "=" * 50)
+    print("🚀 Bot is now LIVE and running!")
+    print("=" * 50)
+    print(f"\n💰 Pay to Enter: ₱{config.entrance_fee}")
+    print(f"🎯 Referral Target: {config.referral_target} users = FREE VIP")
+    print(f"🔗 Payment Link: {config.pay_link}")
+    print("\n💡 User Commands:")
+    print("  • /start, /status, /referrals, /help")
+    print("\n🔐 Admin Commands (hidden):")
+    print("  • /approve, /stats, /broadcast, /pin")
+    print("  • /reply, /messages")
+    print("\n📝 Note: Referral auto-approval checks on user actions")
+    print("\n⌨️  Press Ctrl+C to stop the bot")
+    print("=" * 50 + "\n")
+    
+    # Start polling
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
+    
+    # Keep running
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+
 def main():
     """Initialize and run the bot"""
     try:
@@ -1441,83 +1534,8 @@ def main():
         print("🤖 VIP Access Bot Starting...")
         print("=" * 50)
         
-        # Load configuration
-        config = load_config()
-        logger.info("✅ Configuration loaded successfully")
-        logger.info(f"👤 Admin ID: {config.admin_telegram_id}")
-        logger.info(f"💰 Entrance Fee: ₱{config.entrance_fee}")
-        logger.info(f"🎯 Referral Target: {config.referral_target}")
-        
-        # Initialize database
-        db = DatabaseManager(config.db_path)
-        logger.info(f"✅ Database initialized at: {config.db_path}")
-        
-        # Build application
-        app = Application.builder().token(config.bot_token).build()
-        
-        # Get bot username
-        import asyncio as aio
-        bot_username = aio.run(app.bot.get_me()).username
-        logger.info(f"🤖 Bot Username: @{bot_username}")
-        
-        # Store in bot_data
-        app.bot_data['db'] = db
-        app.bot_data['config'] = config
-        
-        # Initialize handlers
-        user_handlers = UserHandlers(db, config, bot_username)
-        admin_handlers = AdminHandlers(db, config)
-        callback_handler = CallbackHandler(db, config, bot_username)
-        
-        logger.info("✅ Handlers initialized successfully")
-        
-        # Add user command handlers
-        app.add_handler(CommandHandler("start", user_handlers.start))
-        app.add_handler(CommandHandler("status", user_handlers.status))
-        app.add_handler(CommandHandler("referrals", user_handlers.referrals))
-        app.add_handler(CommandHandler("help", user_handlers.help_command))
-        
-        # Add admin command handlers (hidden from normal users)
-        app.add_handler(CommandHandler("approve", admin_handlers.approve))
-        app.add_handler(CommandHandler("stats", admin_handlers.stats))
-        app.add_handler(CommandHandler("broadcast", admin_handlers.broadcast))
-        app.add_handler(CommandHandler("pin", admin_handlers.pin_announcement))
-        app.add_handler(CommandHandler("reply", admin_handlers.reply_user))
-        app.add_handler(CommandHandler("messages", admin_handlers.messages))
-        
-        # Add callback query handler
-        app.add_handler(CallbackQueryHandler(callback_handler.handle))
-        
-        # Add message handler for user messages to admin
-        app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            user_handlers.handle_user_message
-        ))
-        
-        # Add error handler
-        app.add_error_handler(error_handler)
-        
-        logger.info("✅ All handlers registered successfully")
-        print("\n" + "=" * 50)
-        print("🚀 Bot is now LIVE and running!")
-        print("=" * 50)
-        print(f"\n💰 Pay to Enter: ₱{config.entrance_fee}")
-        print(f"🎯 Referral Target: {config.referral_target} users = FREE VIP")
-        print(f"🔗 Payment Link: {config.pay_link}")
-        print("\n💡 User Commands:")
-        print("  • /start, /status, /referrals, /help")
-        print("\n🔐 Admin Commands (hidden):")
-        print("  • /approve, /stats, /broadcast, /pin")
-        print("  • /reply, /messages")
-        print("\n📝 Note: Referral auto-approval checks on user actions")
-        print("\n⌨️  Press Ctrl+C to stop the bot")
-        print("=" * 50 + "\n")
-        
-        # Start polling
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
-        )
+        # Run the async setup
+        asyncio.run(setup_and_run())
         
     except KeyboardInterrupt:
         print("\n\n🛑 Bot stopped by user")
