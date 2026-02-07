@@ -167,8 +167,8 @@ class DatabaseManager:
         """Generate unique referral code for user"""
         return f"REF{telegram_id}"
     
-    def add_or_update_user(self, telegram_id: int, username: str, first_name: str, referred_by_code: Optional[str] = None):
-        """Add new user or update existing user information"""
+    def add_or_update_user(self, telegram_id: int, username: str, first_name: str, referred_by_code: Optional[str] = None) -> Optional[Dict]:
+        """Add new user or update existing user information. Returns referrer info if this is a new referral."""
         try:
             with self.get_connection() as conn:
                 # Check if user exists
@@ -186,42 +186,56 @@ class DatabaseManager:
                             last_activity = ?
                         WHERE telegram_id = ?
                     """, (username, first_name, datetime.utcnow().isoformat(), telegram_id))
+                    conn.commit()
+                    return None
                 else:
                     # New user
                     referral_code = self.generate_referral_code(telegram_id)
                     referred_by_id = None
+                    referrer_info = None
                     
                     # Process referral code if provided
                     if referred_by_code:
                         referrer = conn.execute(
-                            "SELECT telegram_id FROM users WHERE referral_code = ?",
+                            "SELECT telegram_id, first_name, referral_count FROM users WHERE referral_code = ?",
                             (referred_by_code,)
                         ).fetchone()
                         
                         if referrer:
                             referred_by_id = referrer["telegram_id"]
                             # Increment referrer's count
+                            new_count = referrer["referral_count"] + 1
                             conn.execute(
-                                "UPDATE users SET referral_count = referral_count + 1 WHERE telegram_id = ?",
-                                (referred_by_id,)
+                                "UPDATE users SET referral_count = ? WHERE telegram_id = ?",
+                                (new_count, referred_by_id)
                             )
                             logger.info(f"User {telegram_id} referred by {referred_by_id}")
+                            
+                            # Prepare referrer info for notification
+                            referrer_info = {
+                                'telegram_id': referred_by_id,
+                                'first_name': referrer["first_name"],
+                                'new_user_name': first_name,
+                                'new_count': new_count
+                            }
                     
                     conn.execute("""
                         INSERT INTO users (telegram_id, username, first_name, last_activity, referral_code, referred_by)
                         VALUES (?, ?, ?, ?, ?, ?)
                     """, (telegram_id, username, first_name, datetime.utcnow().isoformat(), referral_code, referred_by_id))
-                
-                conn.commit()
+                    
+                    conn.commit()
+                    return referrer_info
         except Exception as e:
             logger.error(f"Error adding/updating user {telegram_id}: {e}")
+            return None
     
     def get_user(self, telegram_id: int) -> Dict:
         """Get user information"""
         try:
             with self.get_connection() as conn:
                 row = conn.execute(
-                    "SELECT paid, shared, vip_until, referral_code, referral_count FROM users WHERE telegram_id = ?",
+                    "SELECT paid, shared, vip_until, referral_code, referral_count, referred_by FROM users WHERE telegram_id = ?",
                     (telegram_id,)
                 ).fetchone()
                 
@@ -231,7 +245,8 @@ class DatabaseManager:
                         "shared": False,
                         "vip_until": None,
                         "referral_code": None,
-                        "referral_count": 0
+                        "referral_count": 0,
+                        "referred_by": None
                     }
                 
                 return {
@@ -239,7 +254,8 @@ class DatabaseManager:
                     "shared": bool(row["shared"]),
                     "vip_until": row["vip_until"],
                     "referral_code": row["referral_code"],
-                    "referral_count": row["referral_count"]
+                    "referral_count": row["referral_count"],
+                    "referred_by": row["referred_by"]
                 }
         except Exception as e:
             logger.error(f"Error getting user {telegram_id}: {e}")
@@ -248,7 +264,8 @@ class DatabaseManager:
                 "shared": False,
                 "vip_until": None,
                 "referral_code": None,
-                "referral_count": 0
+                "referral_count": 0,
+                "referred_by": None
             }
     
     def approve_user(self, telegram_id: int, days: int = 30) -> str:
@@ -531,9 +548,27 @@ class UserHandlers:
                 referred_by_code = context.args[0]
                 logger.info(f"User {user.id} started with referral code: {referred_by_code}")
             
-            # Update user in database
-            self.db.add_or_update_user(user.id, user.username or "", user.first_name or "User", referred_by_code)
+            # Update user in database and get referrer info if this is a new referral
+            referrer_info = self.db.add_or_update_user(user.id, user.username or "", user.first_name or "User", referred_by_code)
             logger.info(f"User {user.id} ({username}) started the bot")
+            
+            # If this was a new referral, notify the referrer
+            if referrer_info:
+                try:
+                    await context.bot.send_message(
+                        chat_id=referrer_info['telegram_id'],
+                        text=(
+                            f"🎉 **New Referral!**\n\n"
+                            f"✅ **{referrer_info['new_user_name']}** just joined using your link!\n\n"
+                            f"👥 Total Referrals: **{referrer_info['new_count']}/{self.config.referral_target}**\n"
+                            f"🎁 Only **{self.config.referral_target - referrer_info['new_count']}** more for FREE VIP!\n\n"
+                            f"Keep sharing! 🚀"
+                        ),
+                        parse_mode="Markdown"
+                    )
+                    logger.info(f"Notified user {referrer_info['telegram_id']} of new referral")
+                except Exception as e:
+                    logger.error(f"Could not notify referrer {referrer_info['telegram_id']}: {e}")
             
             # Check if user reached referral target
             await self._check_referral_approval(update, context)
@@ -566,7 +601,6 @@ class UserHandlers:
             keyboard = [
                 [InlineKeyboardButton(f"💰 OPTION 1: PAY ₱{self.config.entrance_fee}", url=self.config.pay_link)],
                 [InlineKeyboardButton(f"🎯 OPTION 2: GET YOUR REFERRAL LINK", callback_data="get_referral")],
-                [InlineKeyboardButton("📤 SHARE TO FRIENDS", url=self.config.share_link)],
                 [InlineKeyboardButton("✅ CHECK STATUS", callback_data="status")],
                 [InlineKeyboardButton("❓ HELP & INFO", callback_data="help")]
             ]
@@ -924,7 +958,6 @@ class CallbackHandler:
             keyboard = [
                 [InlineKeyboardButton(f"💰 OPTION 1: PAY ₱{self.config.entrance_fee}", url=self.config.pay_link)],
                 [InlineKeyboardButton(f"🎯 OPTION 2: GET YOUR REFERRAL LINK", callback_data="get_referral")],
-                [InlineKeyboardButton("📤 SHARE TO FRIENDS", url=self.config.share_link)],
                 [InlineKeyboardButton("✅ CHECK STATUS", callback_data="status")],
                 [InlineKeyboardButton("❓ HELP & INFO", callback_data="help")]
             ]
@@ -1504,6 +1537,7 @@ async def setup_and_run():
     print("  • /approve, /stats, /broadcast, /pin")
     print("  • /reply, /messages")
     print("\n📝 Note: Referral auto-approval checks on user actions")
+    print("✨ New: Users get notified when someone uses their referral link!")
     print("\n⌨️  Press Ctrl+C to stop the bot")
     print("=" * 50 + "\n")
     
