@@ -462,7 +462,7 @@ class MessageFormatter:
         """Format welcome message"""
         return (
             f"👋 Kumusta, **{username}!**\n\n"
-            f"🎁 **Dalawang Paraan Para Makakuha ng 30 Days VIP Access:**\n\n"
+            f"🎁 **Dalawang Paraan Para Makakuha ng 90 Days VIP Access:**\n\n"
             f"**INSTANT: Mag-bayad ng ₱{entrance_fee}** 💰\n"
             "📍 I-click ang 'PAY ₱305' button\n"
             "📍 Lifetime access\n"
@@ -673,7 +673,7 @@ class UserHandlers:
                         await update.message.reply_text(
                             f"🎉🎉🎉 **CONGRATULATIONS {user_info['first_name']}!** 🎉🎉🎉\n\n"
                             f"✅ Naka-{self.config.referral_target} referrals ka na!\n\n"
-                            f"💎 **FREE 30 Days VIP Access activated!**\n\n"
+                            f"💎 **FREE 90 VIP Access activated!**\n\n"
                             f"🔗 **Access your VIP channel:**\n"
                             f"👉 {self.config.vip_channel_link}\n\n"
                             f"📅 Valid until: **{until_date}**\n\n"
@@ -762,7 +762,7 @@ class UserHandlers:
                 f"💡 **How it works:**\n"
                 f"1. Share your link sa mga kaibigan\n"
                 f"2. Kada user na gumamit ng link mo = +1 referral\n"
-                f"3. Pag naka-{self.config.referral_target} ka, FREE 30 days VIP!\n\n"
+                f"3. Pag naka-{self.config.referral_target} ka, FREE 90 days VIP!\n\n"
                 f"📤 Share now and start earning!"
             )
             
@@ -1078,7 +1078,7 @@ class CallbackHandler:
                 f"💡 **How it works:**\n"
                 f"1. Share your link sa mga kaibigan\n"
                 f"2. Kada user na gumamit ng link mo = +1 referral\n"
-                f"3. Pag naka-{self.config.referral_target} ka, FREE 30 days VIP!\n\n"
+                f"3. Pag naka-{self.config.referral_target} ka, FREE 90 days VIP!\n\n"
                 f"📤 Share now and start earning!"
             )
             
@@ -1124,7 +1124,7 @@ class AdminHandlers:
                 msg = await update.message.reply_text(
                     "📋 **Usage:** `/approve <telegram_id> [days]`\n\n"
                     "**Examples:**\n"
-                    "• `/approve 123456789` → 30 days default\n"
+                    "• `/approve 123456789` → 90 days default\n"
                     "• `/approve 123456789 60` → 60 days custom",
                     parse_mode="Markdown"
                 )
