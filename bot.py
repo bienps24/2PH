@@ -429,11 +429,11 @@ class MessageFormatter:
         return (
             f"👋 Kumusta, **{username}!**\n\n"
             f"🎁 **Dalawang Paraan Para Makakuha ng 30 Days VIP Access:**\n\n"
-            f"**OPTION 1: Mag-bayad ng ₱{entrance_fee}** 💰\n"
+            f"**INSTANT: Mag-bayad ng ₱{entrance_fee}** 💰\n"
             "• I-click ang 'PAY ₱305' button\n"
             "• I-share sa 3 friends\n"
             "• Instant approval pagkatapos ng payment!\n\n"
-            f"**OPTION 2: LIBRE! Mag-refer ng {referral_target} users** 🎯\n"
+            f"**INVITE: LIBRE! Mag-refer ng {referral_target} users** 🎯\n"
             f"• Walang bayad, refer lang!\n"
             f"• I-share ang iyong referral link\n"
             f"• Pag naka-{referral_target} referrals, FREE VIP access!\n\n"
@@ -599,8 +599,8 @@ class UserHandlers:
             )
             
             keyboard = [
-                [InlineKeyboardButton(f"💰 OPTION 1: PAY ₱{self.config.entrance_fee}", url=self.config.pay_link)],
-                [InlineKeyboardButton(f"🎯 OPTION 2: GET YOUR REFERRAL LINK", callback_data="get_referral")],
+                [InlineKeyboardButton(f"💰 INSTANT: PAY ₱{self.config.entrance_fee}", url=self.config.pay_link)],
+                [InlineKeyboardButton(f"🎯 INVITE: GET YOUR REFERRAL LINK", callback_data="get_referral")],
                 [InlineKeyboardButton("✅ CHECK STATUS", callback_data="status")],
                 [InlineKeyboardButton("❓ HELP & INFO", callback_data="help")]
             ]
@@ -956,8 +956,8 @@ class CallbackHandler:
             )
             
             keyboard = [
-                [InlineKeyboardButton(f"💰 OPTION 1: PAY ₱{self.config.entrance_fee}", url=self.config.pay_link)],
-                [InlineKeyboardButton(f"🎯 OPTION 2: GET YOUR REFERRAL LINK", callback_data="get_referral")],
+                [InlineKeyboardButton(f"💰 INSTANT: PAY ₱{self.config.entrance_fee}", url=self.config.pay_link)],
+                [InlineKeyboardButton(f"🎯 INVITE: GET YOUR REFERRAL LINK", callback_data="get_referral")],
                 [InlineKeyboardButton("✅ CHECK STATUS", callback_data="status")],
                 [InlineKeyboardButton("❓ HELP & INFO", callback_data="help")]
             ]
