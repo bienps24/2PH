@@ -529,9 +529,9 @@ class MessageFormatter:
             "**2 Ways to Get VIP Access:**\n\n"
             f"**💰 INSTANT: Pay ₱{entrance_fee}**\n"
             f"1️⃣ Magbayad ng ₱{entrance_fee}\n"
-            "2️⃣ I-share sa 3 friends\n"
-            "3️⃣ Message @PinayWalkerManilaBot with proof\n"
-            "4️⃣ Instant approval!\n\n"
+            "2️⃣ Message @PinayWalkerManilaBot with proof\n"
+            "3️⃣ Instant approval!\n\n"
+            
             f"**🎯 INVITE: Refer {referral_target} Users (FREE!)**\n"
             "1️⃣ Get your referral link from /status\n"
             f"2️⃣ Share at mag-invite ng {referral_target} users\n"
