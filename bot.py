@@ -505,7 +505,6 @@ class MessageFormatter:
         return (
             f"📊 **Status ni {username}**\n\n"
             f"💰 Payment (₱{entrance_fee}): {'✅ Complete' if paid else '❌ Pending'}\n"
-            f"📤 Sharing: {'✅ Complete' if shared else '❌ Pending'}\n"
             f"💎 VIP Access: {vip_status}\n\n"
             f"🎯 **Referral Status:**\n"
             f"👥 Current Referrals: **{referral_count}/{referral_target}**\n"
