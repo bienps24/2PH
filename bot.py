@@ -1,11 +1,11 @@
 """
 VIP Access Telegram Bot
 A professional bot with referral system and pay-to-enter mechanics.
+PostgreSQL version for Railway deployment
 """
 
 import os
 import logging
-import sqlite3
 import asyncio
 from datetime import datetime, timedelta
 from contextlib import contextmanager
@@ -27,6 +27,9 @@ from telegram.ext import (
 )
 from telegram.error import TelegramError
 from dotenv import load_dotenv
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from psycopg2.pool import SimpleConnectionPool
 
 
 # =========================
@@ -37,11 +40,11 @@ class BotConfig:
     """Bot configuration settings"""
     bot_token: str
     admin_telegram_id: int
+    database_url: str
     pay_link: str = "https://tinyurl.com/PinayAtbsPay"
     share_link: str = "https://telegram.me/share/url?url=https%3A%2F%2Ft.me%2Fpinaygroupchatbot&start=LIBRE%20ATABS%20LEAKS%20DITO%20🤪🤪"
     vip_channel_link: str = "https://t.me/+MMRjUFZqsmpmN2Vl"
-    welcome_image: str = "welcome.jpg"
-    db_path: str = "vip.db"
+    welcome_image: str = "assets/welcome.jpg"
     delete_after: int = 9999
     default_vip_days: int = 30
     broadcast_delay: float = 0.5
@@ -57,6 +60,10 @@ def load_config() -> BotConfig:
     if not bot_token:
         raise ValueError("❌ BOT_TOKEN not found in environment variables!")
     
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("❌ DATABASE_URL not found in environment variables!")
+    
     admin_id = os.getenv("ADMIN_TELEGRAM_ID", "0")
     try:
         admin_telegram_id = int(admin_id)
@@ -67,7 +74,8 @@ def load_config() -> BotConfig:
     
     return BotConfig(
         bot_token=bot_token,
-        admin_telegram_id=admin_telegram_id
+        admin_telegram_id=admin_telegram_id,
+        database_url=database_url
     )
 
 
@@ -81,12 +89,12 @@ def setup_logging():
         level=logging.INFO,
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler("bot.log", encoding="utf-8")
         ]
     )
-    # Reduce telegram library verbosity
+    # Reduce library verbosity
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("psycopg2").setLevel(logging.WARNING)
     return logging.getLogger(__name__)
 
 
@@ -94,71 +102,81 @@ logger = setup_logging()
 
 
 # =========================
-# DATABASE MANAGER
+# DATABASE MANAGER (PostgreSQL)
 # =========================
 class DatabaseManager:
-    """Handle all database operations with proper connection management"""
+    """Handle all database operations with PostgreSQL"""
     
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, database_url: str):
+        self.database_url = database_url
+        # Create connection pool
+        self.pool = SimpleConnectionPool(1, 10, database_url)
         self.init_db()
     
     @contextmanager
     def get_connection(self):
-        """Context manager for database connections"""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+        """Context manager for database connections from pool"""
+        conn = self.pool.getconn()
         try:
             yield conn
         finally:
-            conn.close()
+            self.pool.putconn(conn)
     
     def init_db(self):
         """Initialize database with required tables"""
         try:
             with self.get_connection() as conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        telegram_id INTEGER PRIMARY KEY,
-                        username TEXT,
-                        first_name TEXT,
-                        registered_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        paid INTEGER DEFAULT 0,
-                        shared INTEGER DEFAULT 0,
-                        vip_until TEXT,
-                        last_activity TEXT DEFAULT CURRENT_TIMESTAMP,
-                        referral_code TEXT UNIQUE,
-                        referred_by INTEGER,
-                        referral_count INTEGER DEFAULT 0,
-                        FOREIGN KEY (referred_by) REFERENCES users(telegram_id)
-                    )
-                """)
-                
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS activity_log (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        telegram_id INTEGER,
-                        action TEXT,
-                        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
-                    )
-                """)
-                
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS user_messages (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        telegram_id INTEGER,
-                        username TEXT,
-                        first_name TEXT,
-                        message TEXT,
-                        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-                        replied INTEGER DEFAULT 0,
-                        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
-                    )
-                """)
-                
-                conn.commit()
-            logger.info("✅ Database initialized successfully")
+                with conn.cursor() as cur:
+                    # Users table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS users (
+                            telegram_id BIGINT PRIMARY KEY,
+                            username TEXT,
+                            first_name TEXT,
+                            registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            paid BOOLEAN DEFAULT FALSE,
+                            shared BOOLEAN DEFAULT FALSE,
+                            vip_until TIMESTAMP,
+                            last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            referral_code TEXT UNIQUE,
+                            referred_by BIGINT,
+                            referral_count INTEGER DEFAULT 0,
+                            FOREIGN KEY (referred_by) REFERENCES users(telegram_id)
+                        )
+                    """)
+                    
+                    # Activity log table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS activity_log (
+                            id SERIAL PRIMARY KEY,
+                            telegram_id BIGINT,
+                            action TEXT,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+                        )
+                    """)
+                    
+                    # User messages table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS user_messages (
+                            id SERIAL PRIMARY KEY,
+                            telegram_id BIGINT,
+                            username TEXT,
+                            first_name TEXT,
+                            message TEXT,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            replied BOOLEAN DEFAULT FALSE,
+                            FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+                        )
+                    """)
+                    
+                    # Create indexes for better performance
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_users_vip_until ON users(vip_until)")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_telegram_id ON activity_log(telegram_id)")
+                    
+                    conn.commit()
+            logger.info("✅ PostgreSQL database initialized successfully")
         except Exception as e:
             logger.error(f"❌ Database initialization failed: {e}")
             raise
@@ -171,61 +189,65 @@ class DatabaseManager:
         """Add new user or update existing user information. Returns referrer info if this is a new referral."""
         try:
             with self.get_connection() as conn:
-                # Check if user exists
-                existing = conn.execute(
-                    "SELECT telegram_id, referred_by FROM users WHERE telegram_id = ?",
-                    (telegram_id,)
-                ).fetchone()
-                
-                if existing:
-                    # Update existing user
-                    conn.execute("""
-                        UPDATE users SET
-                            username = ?,
-                            first_name = ?,
-                            last_activity = ?
-                        WHERE telegram_id = ?
-                    """, (username, first_name, datetime.utcnow().isoformat(), telegram_id))
-                    conn.commit()
-                    return None
-                else:
-                    # New user
-                    referral_code = self.generate_referral_code(telegram_id)
-                    referred_by_id = None
-                    referrer_info = None
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Check if user exists
+                    cur.execute(
+                        "SELECT telegram_id, referred_by FROM users WHERE telegram_id = %s",
+                        (telegram_id,)
+                    )
+                    existing = cur.fetchone()
                     
-                    # Process referral code if provided
-                    if referred_by_code:
-                        referrer = conn.execute(
-                            "SELECT telegram_id, first_name, referral_count FROM users WHERE referral_code = ?",
-                            (referred_by_code,)
-                        ).fetchone()
+                    if existing:
+                        # Update existing user
+                        cur.execute("""
+                            UPDATE users SET
+                                username = %s,
+                                first_name = %s,
+                                last_activity = %s
+                            WHERE telegram_id = %s
+                        """, (username, first_name, datetime.utcnow(), telegram_id))
+                        conn.commit()
+                        return None
+                    else:
+                        # New user
+                        referral_code = self.generate_referral_code(telegram_id)
+                        referred_by_id = None
+                        referrer_info = None
                         
-                        if referrer:
-                            referred_by_id = referrer["telegram_id"]
-                            # Increment referrer's count
-                            new_count = referrer["referral_count"] + 1
-                            conn.execute(
-                                "UPDATE users SET referral_count = ? WHERE telegram_id = ?",
-                                (new_count, referred_by_id)
+                        # Process referral code if provided
+                        if referred_by_code:
+                            cur.execute(
+                                "SELECT telegram_id, first_name, referral_count FROM users WHERE referral_code = %s",
+                                (referred_by_code,)
                             )
-                            logger.info(f"User {telegram_id} referred by {referred_by_id}")
+                            referrer = cur.fetchone()
                             
-                            # Prepare referrer info for notification
-                            referrer_info = {
-                                'telegram_id': referred_by_id,
-                                'first_name': referrer["first_name"],
-                                'new_user_name': first_name,
-                                'new_count': new_count
-                            }
-                    
-                    conn.execute("""
-                        INSERT INTO users (telegram_id, username, first_name, last_activity, referral_code, referred_by)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (telegram_id, username, first_name, datetime.utcnow().isoformat(), referral_code, referred_by_id))
-                    
-                    conn.commit()
-                    return referrer_info
+                            if referrer:
+                                referred_by_id = referrer["telegram_id"]
+                                new_count = referrer["referral_count"] + 1
+                                
+                                # Increment referrer's count
+                                cur.execute(
+                                    "UPDATE users SET referral_count = %s WHERE telegram_id = %s",
+                                    (new_count, referred_by_id)
+                                )
+                                logger.info(f"User {telegram_id} referred by {referred_by_id}")
+                                
+                                # Prepare referrer info for notification
+                                referrer_info = {
+                                    'telegram_id': referred_by_id,
+                                    'first_name': referrer["first_name"],
+                                    'new_user_name': first_name,
+                                    'new_count': new_count
+                                }
+                        
+                        cur.execute("""
+                            INSERT INTO users (telegram_id, username, first_name, last_activity, referral_code, referred_by)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """, (telegram_id, username, first_name, datetime.utcnow(), referral_code, referred_by_id))
+                        
+                        conn.commit()
+                        return referrer_info
         except Exception as e:
             logger.error(f"Error adding/updating user {telegram_id}: {e}")
             return None
@@ -234,29 +256,31 @@ class DatabaseManager:
         """Get user information"""
         try:
             with self.get_connection() as conn:
-                row = conn.execute(
-                    "SELECT paid, shared, vip_until, referral_code, referral_count, referred_by FROM users WHERE telegram_id = ?",
-                    (telegram_id,)
-                ).fetchone()
-                
-                if not row:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(
+                        "SELECT paid, shared, vip_until, referral_code, referral_count, referred_by FROM users WHERE telegram_id = %s",
+                        (telegram_id,)
+                    )
+                    row = cur.fetchone()
+                    
+                    if not row:
+                        return {
+                            "paid": False,
+                            "shared": False,
+                            "vip_until": None,
+                            "referral_code": None,
+                            "referral_count": 0,
+                            "referred_by": None
+                        }
+                    
                     return {
-                        "paid": False,
-                        "shared": False,
-                        "vip_until": None,
-                        "referral_code": None,
-                        "referral_count": 0,
-                        "referred_by": None
+                        "paid": bool(row["paid"]),
+                        "shared": bool(row["shared"]),
+                        "vip_until": row["vip_until"].isoformat() if row["vip_until"] else None,
+                        "referral_code": row["referral_code"],
+                        "referral_count": row["referral_count"],
+                        "referred_by": row["referred_by"]
                     }
-                
-                return {
-                    "paid": bool(row["paid"]),
-                    "shared": bool(row["shared"]),
-                    "vip_until": row["vip_until"],
-                    "referral_code": row["referral_code"],
-                    "referral_count": row["referral_count"],
-                    "referred_by": row["referred_by"]
-                }
         except Exception as e:
             logger.error(f"Error getting user {telegram_id}: {e}")
             return {
@@ -274,15 +298,16 @@ class DatabaseManager:
             until = datetime.utcnow() + timedelta(days=days)
             
             with self.get_connection() as conn:
-                conn.execute(
-                    "UPDATE users SET vip_until = ?, paid = 1 WHERE telegram_id = ?",
-                    (until.isoformat(), telegram_id)
-                )
-                conn.execute(
-                    "INSERT INTO activity_log (telegram_id, action) VALUES (?, ?)",
-                    (telegram_id, f"Approved for {days} days")
-                )
-                conn.commit()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE users SET vip_until = %s, paid = TRUE WHERE telegram_id = %s",
+                        (until, telegram_id)
+                    )
+                    cur.execute(
+                        "INSERT INTO activity_log (telegram_id, action) VALUES (%s, %s)",
+                        (telegram_id, f"Approved for {days} days")
+                    )
+                    conn.commit()
             
             return until.strftime("%B %d, %Y")
         except Exception as e:
@@ -293,11 +318,12 @@ class DatabaseManager:
         """Mark user as having shared the bot"""
         try:
             with self.get_connection() as conn:
-                conn.execute(
-                    "UPDATE users SET shared = 1 WHERE telegram_id = ?",
-                    (telegram_id,)
-                )
-                conn.commit()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE users SET shared = TRUE WHERE telegram_id = %s",
+                        (telegram_id,)
+                    )
+                    conn.commit()
         except Exception as e:
             logger.error(f"Error marking user {telegram_id} as shared: {e}")
     
@@ -305,8 +331,9 @@ class DatabaseManager:
         """Get total number of users"""
         try:
             with self.get_connection() as conn:
-                count = conn.execute("SELECT COUNT(*) as count FROM users").fetchone()
-                return count["count"]
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM users")
+                    return cur.fetchone()[0]
         except Exception as e:
             logger.error(f"Error getting total users: {e}")
             return 0
@@ -315,8 +342,9 @@ class DatabaseManager:
         """Get all user telegram IDs for broadcasting"""
         try:
             with self.get_connection() as conn:
-                rows = conn.execute("SELECT telegram_id FROM users").fetchall()
-                return [row["telegram_id"] for row in rows]
+                with conn.cursor() as cur:
+                    cur.execute("SELECT telegram_id FROM users")
+                    return [row[0] for row in cur.fetchall()]
         except Exception as e:
             logger.error(f"Error getting user IDs: {e}")
             return []
@@ -325,12 +353,12 @@ class DatabaseManager:
         """Get count of active VIP users"""
         try:
             with self.get_connection() as conn:
-                now = datetime.utcnow().isoformat()
-                count = conn.execute(
-                    "SELECT COUNT(*) as count FROM users WHERE vip_until > ?",
-                    (now,)
-                ).fetchone()
-                return count["count"]
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM users WHERE vip_until > %s",
+                        (datetime.utcnow(),)
+                    )
+                    return cur.fetchone()[0]
         except Exception as e:
             logger.error(f"Error getting VIP count: {e}")
             return 0
@@ -352,11 +380,12 @@ class DatabaseManager:
         """Save user message for admin"""
         try:
             with self.get_connection() as conn:
-                conn.execute("""
-                    INSERT INTO user_messages (telegram_id, username, first_name, message)
-                    VALUES (?, ?, ?, ?)
-                """, (telegram_id, username, first_name, message))
-                conn.commit()
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO user_messages (telegram_id, username, first_name, message)
+                        VALUES (%s, %s, %s, %s)
+                    """, (telegram_id, username, first_name, message))
+                    conn.commit()
         except Exception as e:
             logger.error(f"Error saving message from {telegram_id}: {e}")
     
@@ -364,22 +393,24 @@ class DatabaseManager:
         """Get recent user messages"""
         try:
             with self.get_connection() as conn:
-                rows = conn.execute("""
-                    SELECT id, telegram_id, username, first_name, message, timestamp, replied
-                    FROM user_messages
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                """, (limit,)).fetchall()
-                
-                return [{
-                    "id": row["id"],
-                    "telegram_id": row["telegram_id"],
-                    "username": row["username"],
-                    "first_name": row["first_name"],
-                    "message": row["message"],
-                    "timestamp": row["timestamp"],
-                    "replied": bool(row["replied"])
-                } for row in rows]
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT id, telegram_id, username, first_name, message, timestamp, replied
+                        FROM user_messages
+                        ORDER BY timestamp DESC
+                        LIMIT %s
+                    """, (limit,))
+                    
+                    rows = cur.fetchall()
+                    return [{
+                        "id": row["id"],
+                        "telegram_id": row["telegram_id"],
+                        "username": row["username"],
+                        "first_name": row["first_name"],
+                        "message": row["message"],
+                        "timestamp": row["timestamp"].isoformat(),
+                        "replied": bool(row["replied"])
+                    } for row in rows]
         except Exception as e:
             logger.error(f"Error getting user messages: {e}")
             return []
@@ -388,11 +419,12 @@ class DatabaseManager:
         """Mark message as replied"""
         try:
             with self.get_connection() as conn:
-                conn.execute(
-                    "UPDATE user_messages SET replied = 1 WHERE id = ?",
-                    (message_id,)
-                )
-                conn.commit()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE user_messages SET replied = TRUE WHERE id = %s",
+                        (message_id,)
+                    )
+                    conn.commit()
         except Exception as e:
             logger.error(f"Error marking message {message_id} as replied: {e}")
     
@@ -400,18 +432,20 @@ class DatabaseManager:
         """Check users who reached referral target and return them for approval"""
         try:
             with self.get_connection() as conn:
-                users = conn.execute("""
-                    SELECT telegram_id, referral_count, first_name
-                    FROM users
-                    WHERE referral_count >= ?
-                    AND (vip_until IS NULL OR vip_until < ?)
-                """, (config.referral_target, datetime.utcnow().isoformat())).fetchall()
-                
-                return [{
-                    "telegram_id": row["telegram_id"],
-                    "referral_count": row["referral_count"],
-                    "first_name": row["first_name"]
-                } for row in users]
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT telegram_id, referral_count, first_name
+                        FROM users
+                        WHERE referral_count >= %s
+                        AND (vip_until IS NULL OR vip_until < %s)
+                    """, (config.referral_target, datetime.utcnow()))
+                    
+                    rows = cur.fetchall()
+                    return [{
+                        "telegram_id": row["telegram_id"],
+                        "referral_count": row["referral_count"],
+                        "first_name": row["first_name"]
+                    } for row in rows]
         except Exception as e:
             logger.error(f"Error checking referrals: {e}")
             return []
@@ -1083,7 +1117,7 @@ class AdminHandlers:
         """Approve user for VIP access (admin only)"""
         try:
             if not self.is_admin(update.effective_user.id):
-                return  # Silently ignore for non-admins
+                return
             
             args = context.args
             if not args:
@@ -1091,8 +1125,7 @@ class AdminHandlers:
                     "📋 **Usage:** `/approve <telegram_id> [days]`\n\n"
                     "**Examples:**\n"
                     "• `/approve 123456789` → 30 days default\n"
-                    "• `/approve 123456789 60` → 60 days custom\n\n"
-                    "💡 _Tip: Forward a message from the user to get their ID_",
+                    "• `/approve 123456789 60` → 60 days custom",
                     parse_mode="Markdown"
                 )
                 asyncio.create_task(auto_delete_message(msg, self.config.delete_after + 5))
@@ -1135,36 +1168,22 @@ class AdminHandlers:
                     logger.info(f"✅ Notified user {telegram_id} of approval")
                 except TelegramError as e:
                     logger.error(f"❌ Could not notify user {telegram_id}: {e}")
-                    await update.message.reply_text(
-                        f"⚠️ **User approved** pero hindi ma-notify:\n`{e}`",
-                        parse_mode="Markdown"
-                    )
             
             except ValueError as e:
                 msg = await update.message.reply_text(
-                    f"❌ **Invalid input:** {e}\n\n"
-                    f"Usage: `/approve <telegram_id> [days]`",
+                    f"❌ **Invalid input:** {e}",
                     parse_mode="Markdown"
                 )
                 asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
         
         except Exception as e:
             logger.error(f"Error in approve command: {e}")
-            if self.is_admin(update.effective_user.id):
-                try:
-                    msg = await update.message.reply_text(
-                        f"⚠️ **Unexpected error:** {e}",
-                        parse_mode="Markdown"
-                    )
-                    asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
-                except:
-                    pass
     
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show bot statistics (admin only)"""
         try:
             if not self.is_admin(update.effective_user.id):
-                return  # Silently ignore for non-admins
+                return
             
             total_users = self.db.get_total_users()
             vip_users = self.db.get_vip_users_count()
@@ -1182,38 +1201,21 @@ class AdminHandlers:
                 f"_Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC_"
             )
             
-            keyboard = [[InlineKeyboardButton("🔄 Refresh Stats", callback_data="admin_stats")]]
-            
-            msg = await update.message.reply_text(
-                text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown"
-            )
+            msg = await update.message.reply_text(text, parse_mode="Markdown")
             asyncio.create_task(auto_delete_message(msg, self.config.delete_after + 10))
             
         except Exception as e:
             logger.error(f"Error in stats command: {e}")
-            if self.is_admin(update.effective_user.id):
-                try:
-                    await update.message.reply_text(
-                        f"⚠️ Error loading stats: {e}",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
     
     async def broadcast(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Broadcast message to all users (admin only)"""
         try:
             if not self.is_admin(update.effective_user.id):
-                return  # Silently ignore for non-admins
+                return
             
             if not context.args:
                 msg = await update.message.reply_text(
-                    "📋 **Usage:** `/broadcast <message>`\n\n"
-                    "**Example:**\n"
-                    "`/broadcast Happy New Year to all VIP members!`\n\n"
-                    "⚠️ _This will send the message to ALL users_",
+                    "📋 **Usage:** `/broadcast <message>`",
                     parse_mode="Markdown"
                 )
                 asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
@@ -1223,16 +1225,11 @@ class AdminHandlers:
             user_ids = self.db.get_all_user_ids()
             
             if not user_ids:
-                await update.message.reply_text(
-                    "❌ No users found in database.",
-                    parse_mode="Markdown"
-                )
+                await update.message.reply_text("❌ No users found.", parse_mode="Markdown")
                 return
             
             status_msg = await update.message.reply_text(
-                f"📡 **Broadcasting...**\n\n"
-                f"Total recipients: **{len(user_ids):,}**\n"
-                f"_Please wait..._",
+                f"📡 **Broadcasting to {len(user_ids):,} users...**",
                 parse_mode="Markdown"
             )
             
@@ -1247,105 +1244,30 @@ class AdminHandlers:
                         parse_mode="Markdown"
                     )
                     sent_count += 1
-                    
-                    # Rate limiting
-                    if sent_count % 20 == 0:
-                        try:
-                            await status_msg.edit_text(
-                                f"📡 **Broadcasting...**\n\n"
-                                f"Progress: **{sent_count}/{len(user_ids)}**\n"
-                                f"_Please wait..._",
-                                parse_mode="Markdown"
-                            )
-                        except:
-                            pass
-                    
                     await asyncio.sleep(self.config.broadcast_delay)
-                    
-                except TelegramError as e:
-                    logger.debug(f"Failed to send to {user_id}: {e}")
+                except Exception:
                     failed_count += 1
-                except Exception as e:
-                    logger.error(f"Unexpected error sending to {user_id}: {e}")
-                    failed_count += 1
-            
-            success_rate = (sent_count / (sent_count + failed_count) * 100) if (sent_count + failed_count) > 0 else 0
             
             await status_msg.edit_text(
                 f"✅ **Broadcast Complete!**\n\n"
-                f"📬 Successfully sent: **{sent_count:,}**\n"
-                f"❌ Failed: **{failed_count:,}**\n"
-                f"📊 Success rate: **{success_rate:.1f}%**",
+                f"📬 Sent: **{sent_count:,}**\n"
+                f"❌ Failed: **{failed_count:,}**",
                 parse_mode="Markdown"
             )
             asyncio.create_task(auto_delete_message(status_msg, self.config.delete_after + 10))
             
         except Exception as e:
             logger.error(f"Error in broadcast command: {e}")
-            if self.is_admin(update.effective_user.id):
-                try:
-                    await update.message.reply_text(
-                        f"⚠️ Broadcast error: {e}",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
-    
-    async def pin_announcement(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Pin an announcement in the chat (admin only)"""
-        try:
-            if not self.is_admin(update.effective_user.id):
-                return  # Silently ignore for non-admins
-            
-            if not context.args:
-                msg = await update.message.reply_text(
-                    "📋 **Usage:** `/pin <message>`\n\n"
-                    "**Example:**\n"
-                    "`/pin Server maintenance tonight at 10 PM`",
-                    parse_mode="Markdown"
-                )
-                asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
-                return
-            
-            announcement = " ".join(context.args)
-            
-            try:
-                msg = await update.message.reply_text(
-                    f"📌 **Pinned Announcement**\n\n{announcement}",
-                    parse_mode="Markdown"
-                )
-                await msg.pin(disable_notification=False)
-                logger.info(f"✅ Pinned announcement by admin {update.effective_user.id}")
-            except TelegramError as e:
-                logger.error(f"Could not pin message: {e}")
-                error_msg = await update.message.reply_text(
-                    f"⚠️ **Error pinning message:** {e}",
-                    parse_mode="Markdown"
-                )
-                asyncio.create_task(auto_delete_message(error_msg, self.config.delete_after))
-                
-        except Exception as e:
-            logger.error(f"Error in pin command: {e}")
-            if self.is_admin(update.effective_user.id):
-                try:
-                    await update.message.reply_text(
-                        f"⚠️ Error: {e}",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
     
     async def reply_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Reply to user message (admin only)"""
         try:
             if not self.is_admin(update.effective_user.id):
-                return  # Silently ignore for non-admins
+                return
             
             if len(context.args) < 2:
                 msg = await update.message.reply_text(
-                    "📋 **Usage:** `/reply <user_id> <message>`\n\n"
-                    "**Example:**\n"
-                    "`/reply 123456789 Thank you for your payment!`",
+                    "📋 **Usage:** `/reply <user_id> <message>`",
                     parse_mode="Markdown"
                 )
                 asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
@@ -1355,65 +1277,43 @@ class AdminHandlers:
                 user_id = int(context.args[0])
                 reply_text = " ".join(context.args[1:])
                 
-                # Send reply to user
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=f"📩 **Reply from Admin:**\n\n{reply_text}",
                     parse_mode="Markdown"
                 )
                 
-                # Confirm to admin
                 msg = await update.message.reply_text(
                     f"✅ **Reply sent to user {user_id}**",
                     parse_mode="Markdown"
                 )
                 asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
                 
-                logger.info(f"Admin replied to user {user_id}")
-                
             except ValueError:
                 msg = await update.message.reply_text(
-                    "❌ Invalid user ID. Please use a valid number.",
-                    parse_mode="Markdown"
-                )
-                asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
-            except TelegramError as e:
-                logger.error(f"Error sending reply to user {user_id}: {e}")
-                msg = await update.message.reply_text(
-                    f"⚠️ **Error sending reply:** {e}",
+                    "❌ Invalid user ID.",
                     parse_mode="Markdown"
                 )
                 asyncio.create_task(auto_delete_message(msg, self.config.delete_after))
                 
         except Exception as e:
             logger.error(f"Error in reply command: {e}")
-            if self.is_admin(update.effective_user.id):
-                try:
-                    await update.message.reply_text(
-                        f"⚠️ Error: {e}",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
     
     async def messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """View recent user messages (admin only)"""
         try:
             if not self.is_admin(update.effective_user.id):
-                return  # Silently ignore for non-admins
+                return
             
             messages = self.db.get_user_messages(20)
             
             if not messages:
-                await update.message.reply_text(
-                    "📭 No messages yet.",
-                    parse_mode="Markdown"
-                )
+                await update.message.reply_text("📭 No messages yet.", parse_mode="Markdown")
                 return
             
             text = "📩 **Recent User Messages:**\n\n"
             
-            for msg in messages[:10]:  # Show last 10
+            for msg in messages[:10]:
                 status = "✅" if msg["replied"] else "❌"
                 timestamp = datetime.fromisoformat(msg["timestamp"]).strftime("%m/%d %H:%M")
                 text += (
@@ -1425,22 +1325,11 @@ class AdminHandlers:
             
             text += f"_Showing {min(10, len(messages))} of {len(messages)} messages_"
             
-            msg = await update.message.reply_text(
-                text,
-                parse_mode="Markdown"
-            )
+            msg = await update.message.reply_text(text, parse_mode="Markdown")
             asyncio.create_task(auto_delete_message(msg, self.config.delete_after + 10))
             
         except Exception as e:
             logger.error(f"Error in messages command: {e}")
-            if self.is_admin(update.effective_user.id):
-                try:
-                    await update.message.reply_text(
-                        f"⚠️ Error loading messages: {e}",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
 
 
 # =========================
@@ -1454,13 +1343,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.effective_message.reply_text(
                 "⚠️ **Oops! Something went wrong.**\n\n"
-                "Please try again later or contact support.\n\n"
-                "💬 Support: @PinayWalkerManilaBot",
+                "Please try again later.",
                 parse_mode="Markdown"
             )
-        except TelegramError:
-            pass
-        except Exception:
+        except:
             pass
 
 
@@ -1475,10 +1361,11 @@ async def setup_and_run():
     logger.info(f"👤 Admin ID: {config.admin_telegram_id}")
     logger.info(f"💰 Entrance Fee: ₱{config.entrance_fee}")
     logger.info(f"🎯 Referral Target: {config.referral_target}")
+    logger.info(f"🗄️  Database: PostgreSQL (Railway)")
     
     # Initialize database
-    db = DatabaseManager(config.db_path)
-    logger.info(f"✅ Database initialized at: {config.db_path}")
+    db = DatabaseManager(config.database_url)
+    logger.info(f"✅ PostgreSQL database connected")
     
     # Build application
     app = Application.builder().token(config.bot_token).build()
@@ -1504,18 +1391,17 @@ async def setup_and_run():
     app.add_handler(CommandHandler("referrals", user_handlers.referrals))
     app.add_handler(CommandHandler("help", user_handlers.help_command))
     
-    # Add admin command handlers (hidden from normal users)
+    # Add admin command handlers
     app.add_handler(CommandHandler("approve", admin_handlers.approve))
     app.add_handler(CommandHandler("stats", admin_handlers.stats))
     app.add_handler(CommandHandler("broadcast", admin_handlers.broadcast))
-    app.add_handler(CommandHandler("pin", admin_handlers.pin_announcement))
     app.add_handler(CommandHandler("reply", admin_handlers.reply_user))
     app.add_handler(CommandHandler("messages", admin_handlers.messages))
     
     # Add callback query handler
     app.add_handler(CallbackQueryHandler(callback_handler.handle))
     
-    # Add message handler for user messages to admin
+    # Add message handler
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
         user_handlers.handle_user_message
@@ -1530,14 +1416,15 @@ async def setup_and_run():
     print("=" * 50)
     print(f"\n💰 Pay to Enter: ₱{config.entrance_fee}")
     print(f"🎯 Referral Target: {config.referral_target} users = FREE VIP")
-    print(f"🔗 Payment Link: {config.pay_link}")
     print("\n💡 User Commands:")
     print("  • /start, /status, /referrals, /help")
-    print("\n🔐 Admin Commands (hidden):")
-    print("  • /approve, /stats, /broadcast, /pin")
+    print("\n🔐 Admin Commands:")
+    print("  • /approve, /stats, /broadcast")
     print("  • /reply, /messages")
-    print("\n📝 Note: Referral auto-approval checks on user actions")
-    print("✨ New: Users get notified when someone uses their referral link!")
+    print("\n✨ Features:")
+    print("  • PostgreSQL database (persistent storage)")
+    print("  • Referral notifications")
+    print("  • Auto-approval at target")
     print("\n⌨️  Press Ctrl+C to stop the bot")
     print("=" * 50 + "\n")
     
@@ -1568,7 +1455,6 @@ def main():
         print("🤖 VIP Access Bot Starting...")
         print("=" * 50)
         
-        # Run the async setup
         asyncio.run(setup_and_run())
         
     except KeyboardInterrupt:
@@ -1577,7 +1463,6 @@ def main():
     except Exception as e:
         logger.critical(f"❌ Failed to start bot: {e}", exc_info=True)
         print(f"\n❌ CRITICAL ERROR: {e}")
-        print("Please check bot.log for details")
         raise
 
 
